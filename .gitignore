@@ -1,4 +1,5 @@
 __pycache__/
 *.pyc
-submission.py
 *.pth
+/submission.py
+/build/

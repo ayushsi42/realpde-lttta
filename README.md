@@ -3,6 +3,21 @@
 This kit contains the minimal files to build a Codabench submission for Track 2:
 Long-Term Test-Time Adaptation on streaming real-world PIV data.
 
+> **Repo layout note:** this working copy reorganizes the original flat kit
+> into a scalable structure so new ideas don't require touching packaging code:
+> - `shared/` — code that never changes per idea: `load_baseline.py`,
+>   `rpde_baselines/` (vendored CNO/FNO/Transolver), `checkpoints/`.
+> - `variants/<name>/` — one folder per idea, `submission.py` (+ optional
+>   `policy.yaml`) only. Currently `baseline_reference` (the org's reference
+>   template) and `agentic_rule` (the org's agentic demo).
+> - `make_submission.py` — assembles `shared/` + `variants/<name>/` into
+>   `build/<name>.zip`, running `local_eval.py` and a zip-contract check first.
+>   See `python3 make_submission.py --help`.
+>
+> The file descriptions below describe the **original** kit paths
+> (`submission_template.py`, `agentic_demo/`, etc.) for reference; where they
+> now live is noted inline.
+
 ## Files
 
 - `submission_template.py`: fill this in to create your `submission.py`. Includes
@@ -60,12 +75,12 @@ The leaderboard combines them into a single `final_score`; that combination is
 not published, so no total is printed here.
 
 ```bash
-# copy the template to submission.py, then point at its directory
-cp submission_template.py submission.py
-python local_eval.py --submission .
+# run any variant directly against local_eval.py
+python local_eval.py --submission variants/baseline_reference
+python local_eval.py --submission variants/agentic_rule
 
-# or run the bundled agentic baseline
-python local_eval.py --submission agentic_demo
+# or build + verify a Codabench-ready zip in one step (recommended)
+python make_submission.py --variant agentic_rule
 ```
 
 `local_eval.py` mirrors the evaluator's streaming loop (the evaluator itself is
