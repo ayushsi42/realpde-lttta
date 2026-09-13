@@ -1,6 +1,6 @@
-# Agentic LTTTA Demo (bounded controller, offline-design / online-execution)
+# Active RealPDE Solution (bounded controller, offline-design / online-execution)
 
-A submittable adaptation of the **agentic-LTTTA baseline**
+A submittable starting point based on the **agentic-LTTTA baseline**
 (<https://github.com/PgUpDn/agentic_LTTTA>) to the official Track 2 protocol.
 The upstream repository is the full method: a bounded online controller over a
 fixed action space, whose policy knobs are tuned by an *offline* LLM design
@@ -35,7 +35,7 @@ gateway. This folder shows how to run that idea under the competition contract.
 
 ```bash
 # from the starting_kit root: rule mode, CPU
-python local_eval.py --submission agentic_demo
+python scripts/local_eval.py --submission src/solution
 
 # online mode is exercised automatically in the official container when
 # mode: llm is set; locally you can point OPENAI_* at any OpenAI-compatible

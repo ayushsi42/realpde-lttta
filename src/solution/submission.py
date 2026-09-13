@@ -1,4 +1,4 @@
-"""Agentic LTTTA demo submission for RealPDE Track 2.
+"""Active RealPDE Track 2 submission.
 
 A self-contained, submittable adaptation of the agentic-LTTTA baseline
 (https://github.com/PgUpDn/agentic_LTTTA) to the official Track 2 protocol:
@@ -267,7 +267,7 @@ class AgenticTTTModel(TTTModel):
         self._step += 1
         self._spent_s += time.perf_counter() - t0
         # The evaluator also accepts optional info["lower"] / info["upper"] SPS
-        # bounds (see submission_template.py for that pattern); `action` /
+        # bounds are optional; `action` /
         # `source` here are local-debug fields (log them yourself if useful)
         # and are ignored on the platform, so this demo keeps info minimal.
         return pred_norm, {"adapt_loss": adapt_loss}

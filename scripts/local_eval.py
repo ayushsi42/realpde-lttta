@@ -3,7 +3,7 @@
 
 Self-contained: it does NOT need the downloaded ingestion/scoring programs. It
 mirrors the streaming loop of the official ingestion program on the tiny
-``example_data`` bundled here -- reset at trajectory boundaries, prev-target
+the bundled ``data/example`` set -- reset at trajectory boundaries, prev-target
 passing, and per-step timing -- then prints the mean per-step time and a mock
 relative-L2 over the measured (u, v) channels.
 
@@ -18,13 +18,12 @@ into the bundled ``scoring.py``, with the same all-or-nothing and matching-shape
 checks, so you can see ``sps_score`` change locally.
 
 Usage:
-    python local_eval.py --submission <dir with submission.py>
-    python local_eval.py --submission agentic_demo
-    python local_eval.py            # defaults --submission to this kit dir
+    python scripts/local_eval.py --submission <dir with submission.py>
+    python scripts/local_eval.py     # defaults --submission to src/solution
 
 Data layout:
-    <data>/test_real/*.h5      (flat u, v[, p] datasets, native 64x128)
-    <data>/mean_std_real.pt
+    data/example/test_real/*.h5      (flat u, v[, p] datasets, native 64x128)
+    data/example/mean_std_real.pt
 """
 
 from __future__ import annotations
@@ -40,7 +39,8 @@ import h5py
 import numpy as np
 import torch
 
-HERE = Path(__file__).resolve().parent
+SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT = SCRIPT_DIR.parent
 
 # Fixed streaming protocol constants (must match the official pipeline).
 IN_STEP = 20
@@ -149,10 +149,10 @@ def rel_l2(pred: np.ndarray, target: np.ndarray, c: int) -> float:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--submission", default=str(HERE),
-                    help="directory containing submission.py (default: this kit)")
-    ap.add_argument("--data", default=str(HERE / "example_data"),
-                    help="example_data directory (default: ./example_data)")
+    ap.add_argument("--submission", default=str(ROOT / "src" / "solution"),
+                    help="directory containing submission.py (default: src/solution)")
+    ap.add_argument("--data", default=str(ROOT / "data" / "example"),
+                    help="PIV data directory (default: data/example)")
     args = ap.parse_args()
 
     submission_dir = Path(args.submission).resolve()
@@ -161,7 +161,7 @@ def main() -> None:
 
     stats_path = data_dir / "mean_std_real.pt"
     if not stats_path.exists():
-        raise SystemExit(f"Missing {stats_path}. Run example_data/make_example.py first.")
+        raise SystemExit(f"Missing {stats_path}. Run data/example/make_example.py first.")
 
     stream = build_stream(data_dir)
     normalizer = Normalizer(stats_path)
@@ -281,7 +281,7 @@ def main() -> None:
     # are illustrative, NOT leaderboard-comparable; point --data at real data for
     # the true metric, and time_score reflects LOCAL wall time.
     try:
-        sys.path.insert(0, str(HERE))
+        sys.path.insert(0, str(SCRIPT_DIR))
         import scoring as official
     except Exception as exc:  # noqa: BLE001
         print(f"[local_eval] bundled scoring.py not available ({type(exc).__name__}: {exc}); "

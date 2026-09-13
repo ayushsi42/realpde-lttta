@@ -1,5 +1,7 @@
 __pycache__/
 *.pyc
-*.pth
 /submission.py
-/build/
+/checkpoints/
+/data/train_real.tar.gz*
+/data/train_real/
+/outputs/

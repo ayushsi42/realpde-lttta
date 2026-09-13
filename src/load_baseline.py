@@ -34,7 +34,7 @@ Usage (Track 2: as the base model your TTT method adapts)
     # raw-space shape check only; in evaluation ttt_step receives tensors that
     # are already normalized with the official stats (the space the
     # checkpoints were trained in), so no extra scaling is needed there.
-    x = make_example_input("example_data/test_real/5025_5.h5")   # (1,20,32,64,3)
+    x = make_example_input("data/example/test_real/5025_5.h5")   # (1,20,32,64,3)
     y = base(x)                                                  # (1,20,32,64,3)
 
 Checkpoints live on the competition Google Drive under ``baseline_checkpoints/``
@@ -172,7 +172,7 @@ def load_baseline(model_type_or_ckpt, ckpt_path=None, device="cpu",
 def make_example_input(h5_path, t_start=0, t_in=T_IN, sub_s=2, device="cpu"):
     """Build a (1, T_in, H, W, 3) input tensor from an example h5 file.
 
-    Works with the kit's ``example_data/test_real/*.h5`` (top-level ``u``, ``v``
+    Works with the kit's ``data/example/test_real/*.h5`` (top-level ``u``, ``v``
     of shape (T, 64, 128)). With sub_s=2 (the foil real-data pipeline) the
     result is (1, 20, 32, 64, 3); sub_s=1 keeps native (1, 20, 64, 128, 3).
     Channel 3 (p) is zero. Raw space, for shape checks; evaluation feeds

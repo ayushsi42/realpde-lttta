@@ -1,4 +1,4 @@
-# Bounded-controller policy for the agentic demo submission.
+# Bounded-controller policy for the active submission.
 # Tune these offline (e.g. with the upstream agentic_LTTTA ADK design agents:
 # https://github.com/PgUpDn/agentic_LTTTA) and ship the tuned file in your zip.
 # The scored loop just reads this file; mode "rule" stays fully deterministic.

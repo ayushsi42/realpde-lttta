@@ -3,41 +3,46 @@
 This kit contains the minimal files to build a Codabench submission for Track 2:
 Long-Term Test-Time Adaptation on streaming real-world PIV data.
 
-> **Repo layout note:** this working copy reorganizes the original flat kit
-> into a scalable structure so new ideas don't require touching packaging code:
-> - `shared/` — code that never changes per idea: `load_baseline.py`,
->   `rpde_baselines/` (vendored CNO/FNO/Transolver), `checkpoints/`.
-> - `variants/<name>/` — one folder per idea, `submission.py` (+ optional
->   `policy.yaml`) only. Currently `baseline_reference` (the org's reference
->   template) and `agentic_rule` (the org's agentic demo).
-> - `make_submission.py` — assembles `shared/` + `variants/<name>/` into
->   `build/<name>.zip`, running `local_eval.py` and a zip-contract check first.
->   See `python3 make_submission.py --help`.
->
-> The file descriptions below describe the **original** kit paths
-> (`submission_template.py`, `agentic_demo/`, etc.) for reference; where they
-> now live is noted inline.
+> **Project layout:** this follows a conventional ML layout. Edit only
+> `src/solution/`; use Git branches for experiments. `data/` and `checkpoints/`
+> are local and ignored by Git, while `outputs/` holds generated artifacts.
+
+```text
+src/          Python source: active solution, baseline loader, vendored models
+data/         local example and training PIV data (Git-ignored)
+checkpoints/  local pretrained weights (Git-ignored)
+scripts/      run evaluation, package a ZIP, visualize data, pack checkpoints
+docs/         task contract, metrics, study notes, literature review
+outputs/      generated submission ZIPs and visualizations (Git-ignored)
+```
 
 ## Files
 
-- `submission_template.py`: fill this in to create your `submission.py`. Includes
-  a correct prev-target adaptation reference implementation.
-- `ttt_model.py`: optional convenience base class for the TTT interface.
-- `local_eval.py`: run a CPU smoke test against the bundled `example_data`, and
+- `src/solution/`: the active submission: edit `submission.py` and its
+  optional `policy.yaml` as the project advances.
+- `src/ttt_model.py`: optional convenience base class for the TTT interface.
+- `scripts/local_eval.py`: run a CPU smoke test against the bundled `data/example`, and
   report the real subscores using the bundled `scoring.py`.
-- `scoring.py`: the official scoring program (the exact leaderboard formulas).
-  Run it yourself on real data, or let `local_eval.py` call it.
-- `pack_ckpt_fp16.py`: pack an fp32 checkpoint to fp16 to fit the size limit.
-- `load_baseline.py`: build CNO / FNO / Transolver and load an official
+- `scripts/scoring.py`: the official scoring program (the exact leaderboard formulas).
+  Run it yourself on real data, or let `scripts/local_eval.py` call it.
+- `scripts/pack_ckpt_fp16.py`: pack an fp32 checkpoint to fp16 to fit the size limit.
+- `src/load_baseline.py`: build CNO / FNO / Transolver and load an official
   checkpoint, ready to wrap as your TTT base model (see "Baseline Models").
-- `rpde_baselines/`: vendored baseline model code (renamed so it never shadows
+- `src/rpde_baselines/`: vendored baseline model code (renamed so it never shadows
   the evaluator's own `realpdebench` package); imports offline.
-- `agentic_demo/`: submittable agentic baseline (bounded controller +
-  optional gateway LLM), adapted from
-  [agentic_LTTTA](https://github.com/PgUpDn/agentic_LTTTA); see its README.
+- `src/solution/`: currently starts from a bounded-controller adaptation of
+  [agentic_LTTTA](https://github.com/PgUpDn/agentic_LTTTA); see
+  `src/solution/README.md`.
 - `docs/interface.md`, `docs/metrics.md`: interface contract and metric summary.
-- `example_data/`: two tiny synthetic trajectories + the official normalization
-  stats, for local shape checks only (regenerate with `example_data/make_example.py`).
+- `docs/literature_review_test_time_adaptation.md`: curated background reading
+  on test-time adaptation and its relevance to this track.
+- `scripts/visualize_piv_window.py`: generates an interactive PIV window explorer
+  under `artifacts/` (generated files are not versioned).
+- `data/example/`: two tiny synthetic trajectories + the official normalization
+  stats, for local shape checks only (regenerate with `data/example/make_example.py`).
+- `data/`: local downloaded training data only; intentionally ignored by Git.
+  `train_real.tar.gz` is a 7.39 GB download, so keep it local and extract/use it
+  from this directory rather than placing it in a submission archive.
 
 ## Interface
 
@@ -64,7 +69,7 @@ Evaluation is duck-typed, so subclassing `ttt_model.py` is optional. See
 
 ## Local Smoke Test
 
-`local_eval.py` mirrors the official streaming loop (trajectory resets,
+`scripts/local_eval.py` mirrors the official streaming loop (trajectory resets,
 prev-target passing, per-step timing) on the bundled example data, then feeds the
 predictions through the bundled `scoring.py` to print the five real subscores. It
 uses the same subscore formulas the leaderboard uses, but the numbers on the tiny
@@ -75,15 +80,14 @@ The leaderboard combines them into a single `final_score`; that combination is
 not published, so no total is printed here.
 
 ```bash
-# run any variant directly against local_eval.py
-python local_eval.py --submission variants/baseline_reference
-python local_eval.py --submission variants/agentic_rule
+# run the active solution directly against the local evaluator
+python scripts/local_eval.py
 
 # or build + verify a Codabench-ready zip in one step (recommended)
-python make_submission.py --variant agentic_rule
+python scripts/make_submission.py
 ```
 
-`local_eval.py` mirrors the evaluator's streaming loop (the evaluator itself is
+`scripts/local_eval.py` mirrors the evaluator's streaming loop (the evaluator itself is
 not downloadable); for the exact submission contract, `docs/interface.md` is
 authoritative.
 
@@ -113,7 +117,7 @@ The extracted archive (checkpoint included) must stay under **256 MB**. If your
 fp32 checkpoint is too large, pack it to fp16:
 
 ```bash
-python pack_ckpt_fp16.py model_fp32.pth model.pth
+python scripts/pack_ckpt_fp16.py model_fp32.pth model.pth
 ```
 
 The tool handles complex tensors safely; see its docstring for the matching
@@ -151,12 +155,12 @@ Use one as the base model your TTT method adapts:
 
 ```python
 from load_baseline import load_baseline, make_example_input
-from submission_template import ReferenceTTTModel
+from solution.submission import AgenticTTTModel
 
 base, meta = load_baseline("sim_real_cno.pth")     # type auto-detected
-model = ReferenceTTTModel(base, device="cpu")      # adapts base in ttt_step
+model = AgenticTTTModel(base, device="cpu", policy={...})  # adapt in ttt_step
 
-x = make_example_input("example_data/test_real/5025_5.h5")  # (1,20,32,64,3)
+x = make_example_input("data/example/test_real/5025_5.h5")  # (1,20,32,64,3)
 y = base(x)                                                 # (1,20,32,64,3)
 ```
 
@@ -178,16 +182,16 @@ Track 1 and Track 2 share the same release.
 Optional LLM calls must go through the organizer-provided gateway. The endpoint,
 the model name and a code example are on the competition Submission page. Direct
 network access and your own API keys are prohibited, and LLM latency counts
-toward Time. The numbers in `agentic_demo/policy.yaml` are that demo's own, not
+toward Time. The numbers in `src/solution/policy.yaml` are the active solution's own, not
 gateway limits.
 
-## Agentic Baseline
+## Active Solution Starting Point
 
-`agentic_demo/` is a submittable adaptation of the agentic-LTTTA baseline
+`src/solution/` is a submittable adaptation of the agentic-LTTTA baseline
 ([github.com/PgUpDn/agentic_LTTTA](https://github.com/PgUpDn/agentic_LTTTA)):
 a bounded controller (skip / recalibrate / update-adapter) driven by an
 offline-tuned `policy.yaml`, with optional online LLM action selection through
 the organizer gateway (auto-detected from the injected `OPENAI_*` environment,
-safe fallback to the rule policy). Run `python local_eval.py --submission
-agentic_demo`, and see `agentic_demo/README.md` for how it maps the upstream
+safe fallback to the rule policy). Run `python scripts/local_eval.py --submission
+src/solution`, and see `src/solution/README.md` for how it maps the upstream
 offline-design / online-execution demos onto the official Track 2 protocol.

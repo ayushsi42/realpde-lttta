@@ -1,25 +1,23 @@
 #!/usr/bin/env python3
-"""Assemble and package a RealPDE Track 2 submission variant.
+"""Assemble and package the active RealPDE Track 2 submission.
 
-Scalable layout, so new ideas never touch this file:
+The repository has one active solution. Iterate on it directly and use Git
+branches when exploring alternatives:
 
-    shared/                    <- never changes per-idea
+    src/                       <- active submission and stable model code
         load_baseline.py
         rpde_baselines/
-        checkpoints/<name>.pth
-    variants/<idea_name>/      <- everything that DOES vary per idea
-        submission.py
-        policy.yaml            (optional, e.g. for agentic_rule)
-        model.pth               (optional; or point at shared/checkpoints/...)
-    build/<idea_name>/         <- generated staging dir (gitignored)
-    build/<idea_name>.zip      <- generated, Codabench-ready
+        solution/              <- edit only this folder during normal work
+            submission.py
+            policy.yaml        (optional)
+    checkpoints/<name>.pth     <- local checkpoint files (Git-ignored)
+    outputs/submissions/       <- generated staging directory and upload ZIP
 
 What this does, in order:
-  1. Stages a variant: copies variants/<name>/* into build/<name>/, then
-     copies in shared/load_baseline.py + shared/rpde_baselines/ ONLY IF the
-     variant's submission.py actually imports load_baseline (so a submission
-     with no real checkpoint stays tiny, like agentic_rule does today).
-  2. If --checkpoint is given (a name under shared/checkpoints/, or a path),
+  1. Stages src/solution/* into outputs/submissions/submission/, then copies in
+     src/load_baseline.py + src/rpde_baselines/ ONLY IF solution's
+     submission.py imports load_baseline.
+  2. If --checkpoint is given (a name under checkpoints/, or a path),
      copies it into the staged dir as model.pth.
   3. Runs local_eval.py against the staged dir. Refuses to package on failure.
   4. Zips build/<name>/'s CONTENTS flat at the zip root (never the folder
@@ -31,16 +29,9 @@ What this does, in order:
      staging directory.
 
 Usage:
-    python3 make_submission.py --variant agentic_rule
-    python3 make_submission.py --variant baseline_reference
-    python3 make_submission.py --variant my_new_idea --checkpoint sim_real_cno
-    python3 make_submission.py --variant my_new_idea --checkpoint /path/to/model.pth
-
-Adding a new idea:
-    mkdir variants/my_new_idea
-    cp variants/baseline_reference/submission.py variants/my_new_idea/
-    # edit variants/my_new_idea/submission.py -- that's the only file to write
-    python3 make_submission.py --variant my_new_idea
+    python3 scripts/make_submission.py
+    python3 scripts/make_submission.py --checkpoint sim_real_cno
+    python3 scripts/make_submission.py --checkpoint /path/to/model.pth
 """
 
 from __future__ import annotations
@@ -54,10 +45,11 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-SHARED = HERE / "shared"
-VARIANTS = HERE / "variants"
-BUILD = HERE / "build"
+ROOT = Path(__file__).resolve().parent.parent
+BASELINES = ROOT / "src"
+SOLUTION = BASELINES / "solution"
+CHECKPOINTS = ROOT / "checkpoints"
+BUILD = ROOT / "outputs" / "submissions"
 SIZE_CAP_BYTES = 256 * 1024 * 1024
 
 EXCLUDE_DIR_NAMES = {"__pycache__", ".git", ".ipynb_checkpoints"}
@@ -76,27 +68,26 @@ def copytree_filtered(src: Path, dst: Path) -> None:
     shutil.copytree(src, dst, ignore=ignore, dirs_exist_ok=True)
 
 
-def stage_variant(name: str, checkpoint: str | None) -> Path:
-    variant_dir = VARIANTS / name
-    if not variant_dir.is_dir():
-        raise SystemExit(f"[make_submission] no such variant: {variant_dir}")
-    sub_file = variant_dir / "submission.py"
+def stage_solution(checkpoint: str | None) -> Path:
+    if not SOLUTION.is_dir():
+        raise SystemExit(f"[make_submission] missing active solution directory: {SOLUTION}")
+    sub_file = SOLUTION / "submission.py"
     if not sub_file.exists():
-        raise SystemExit(f"[make_submission] {variant_dir} has no submission.py")
+        raise SystemExit(f"[make_submission] {SOLUTION} has no submission.py")
 
-    staged = BUILD / name
+    staged = BUILD / "submission"
     if staged.exists():
         shutil.rmtree(staged)
     staged.mkdir(parents=True)
 
-    copytree_filtered(variant_dir, staged)
-    print(f"[make_submission] staged variant files from {variant_dir}")
+    copytree_filtered(SOLUTION, staged)
+    print(f"[make_submission] staged active solution from {SOLUTION}")
 
     if imports_load_baseline(sub_file):
-        copytree_filtered(SHARED / "rpde_baselines", staged / "rpde_baselines")
-        shutil.copy2(SHARED / "load_baseline.py", staged / "load_baseline.py")
+        copytree_filtered(BASELINES / "rpde_baselines", staged / "rpde_baselines")
+        shutil.copy2(BASELINES / "load_baseline.py", staged / "load_baseline.py")
         print("[make_submission] submission.py imports load_baseline -> "
-              "copied shared/load_baseline.py + shared/rpde_baselines/")
+              "copied src/load_baseline.py + src/rpde_baselines/")
     else:
         print("[make_submission] submission.py does not import load_baseline -> "
               "skipped shared model code (keeps the archive small)")
@@ -104,18 +95,18 @@ def stage_variant(name: str, checkpoint: str | None) -> Path:
     if checkpoint:
         ckpt_path = Path(checkpoint)
         if not ckpt_path.exists():
-            ckpt_path = SHARED / "checkpoints" / checkpoint
+            ckpt_path = CHECKPOINTS / checkpoint
             if not ckpt_path.suffix:
                 ckpt_path = ckpt_path.with_suffix(".pth")
         if not ckpt_path.exists():
             raise SystemExit(
                 f"[make_submission] checkpoint not found: {checkpoint!r} "
-                f"(looked at {checkpoint!r} and {SHARED / 'checkpoints'})"
+                f"(looked at {checkpoint!r} and {CHECKPOINTS})"
             )
         shutil.copy2(ckpt_path, staged / "model.pth")
         print(f"[make_submission] copied checkpoint {ckpt_path} -> model.pth")
-    elif (variant_dir / "model.pth").exists():
-        print("[make_submission] variant already ships its own model.pth")
+    elif (SOLUTION / "model.pth").exists():
+        print("[make_submission] solution already ships its own model.pth")
 
     return staged
 
@@ -123,8 +114,8 @@ def stage_variant(name: str, checkpoint: str | None) -> Path:
 def run_local_eval(staged_dir: Path) -> None:
     print(f"[make_submission] running local_eval.py --submission {staged_dir}")
     result = subprocess.run(
-        [sys.executable, str(HERE / "local_eval.py"), "--submission", str(staged_dir)],
-        cwd=str(HERE),
+        [sys.executable, str(ROOT / "scripts" / "local_eval.py"), "--submission", str(staged_dir)],
+        cwd=str(ROOT),
     )
     if result.returncode != 0:
         raise SystemExit(
@@ -225,21 +216,20 @@ def verify_zip_layout_and_contract(zip_path: Path) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--variant", required=True, help="name of a folder under variants/")
     ap.add_argument("--checkpoint", default=None,
-                    help="checkpoint name under shared/checkpoints/ (or a full path); "
+                    help="checkpoint name under checkpoints/ (or a full path); "
                          "copied into the staged submission as model.pth")
     ap.add_argument("--skip-local-eval", action="store_true")
     args = ap.parse_args()
 
-    staged = stage_variant(args.variant, args.checkpoint)
+    staged = stage_solution(args.checkpoint)
 
     if not args.skip_local_eval:
         run_local_eval(staged)
     else:
         print("[make_submission] --skip-local-eval set, skipping smoke test")
 
-    out_path = BUILD / f"{args.variant}.zip"
+    out_path = BUILD / "submission.zip"
     packaged = build_zip(staged, out_path)
     print(f"[make_submission] packaged {len(packaged)} files into {out_path}")
     for name in packaged:
