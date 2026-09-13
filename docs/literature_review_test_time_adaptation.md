@@ -1,6 +1,6 @@
 # Test-Time Adaptation: a Literature Review for Streaming Physical Forecasting
 
-**Prepared:** 13 September 2026  
+**Prepared:** 13 September 2026
 **Scope:** Test-time adaptation (TTA), test-time training (TTT), continual TTA, and adjacent online uncertainty methods. This is a curated technical review rather than a claim to enumerate every one of the field's hundreds of papers. The broadest recent survey reports more than 400 TTA papers and is the best map for exhaustive searching: [Xiao & Snoek, 2024](https://arxiv.org/abs/2411.03687).
 
 **Why this document is tailored to RealPDE Track 2:** most headline TTA work is *unlabelled image classification*. This competition is materially different: it is a causal, long-lived **regression/forecasting** stream in which the correct output from the preceding window is revealed with a one-step delay. That delayed target is unusually valuable: it permits genuine supervised online learning. Methods that only minimize classification entropy should therefore be treated as ideas about *stability and update control*, not copied literally.
@@ -11,11 +11,11 @@
 
 A deployed predictor was trained on source data:
 
-\[
+$$
 f_{\theta_0}: x \mapsto \hat y.
-\]
+$$
 
-At deployment, the joint distribution changes from \(P_S(x,y)\) to \(P_T(x,y)\). This can happen through sensor noise, changed geometry, new operating conditions, numerical-vs-real mismatch, or an evolving environment. Ordinary inference freezes \(\theta_0\); TTA uses evidence available at deployment to form \(\theta_t\) and predict better on the target stream.
+At deployment, the joint distribution changes from $P_S(x,y)$ to $P_T(x,y)$. This can happen through sensor noise, changed geometry, new operating conditions, numerical-vs-real mismatch, or an evolving environment. Ordinary inference freezes $\theta_0$; TTA uses evidence available at deployment to form $\theta_t$ and predict better on the target stream.
 
 The generic causal loop is:
 
@@ -31,15 +31,15 @@ The central design question is not merely “how can we update?” but:
 
 ### The RealPDE specialization
 
-At stream step \(t\), the competition supplies current input \(x_t\) and the *previous* target \(y_{t-1}\). A legal supervised update is therefore
+At stream step $t$, the competition supplies current input $x_t$ and the *previous* target $y_{t-1}$. A legal supervised update is therefore
 
-\[
+$$
 L_{\mathrm{sup},t-1}(\theta) = \ell(f_\theta(x_{t-1}),y_{t-1}),
 \qquad
 \theta_t \leftarrow \theta_{t-1}-\eta\nabla_\theta L_{\mathrm{sup},t-1}.
-\]
+$$
 
-It must happen before predicting \(\hat y_t=f_{\theta_t}(x_t)\), and it must never use \(y_t\). This is online learning with delayed labels, not the usual “fully unlabelled TTA” setting.
+It must happen before predicting $\hat y_t=f_{\theta_t}(x_t)$, and it must never use $y_t$. This is online learning with delayed labels, not the usual “fully unlabelled TTA” setting.
 
 ---
 
@@ -65,41 +65,41 @@ Two abbreviations collide in the literature: “TTA” can mean **test-time adap
 
 The oldest practical family does not learn all weights. It recalculates Batch Normalization (BN) statistics on target data, or blends source and target statistics. If an activation is normalized as
 
-\[
+$$
 z'=(z-\mu)/\sqrt{\sigma^2+\epsilon},
-\]
+$$
 
-then changed sensor/style statistics can be partly repaired by estimating \(\mu,\sigma^2\) from target activations. This is cheap and often a strong safety baseline, but it depends on suitable normalization layers and enough representative samples. It can become unstable with batch size one, correlated frames, or quickly changing regimes.
+then changed sensor/style statistics can be partly repaired by estimating $\mu,\sigma^2$ from target activations. This is cheap and often a strong safety baseline, but it depends on suitable normalization layers and enough representative samples. It can become unstable with batch size one, correlated frames, or quickly changing regimes.
 
 ### 3.2 Test-Time Training (Sun et al., 2020)
 
 [Sun et al.](https://arxiv.org/abs/1909.13231) introduced the influential idea of adding a self-supervised task during source training (their example predicts image rotation). At test time, the model optimizes this auxiliary task on the current unlabelled input before making the main prediction.
 
-**Contribution:** it established that a test input can itself provide a learning signal.  
-**Weakness:** success requires an auxiliary task that is correlated with the real task; improving rotation prediction does not guarantee better physical forecasting.  
+**Contribution:** it established that a test input can itself provide a learning signal.
+**Weakness:** success requires an auxiliary task that is correlated with the real task; improving rotation prediction does not guarantee better physical forecasting.
 **RealPDE translation:** temporal consistency, reconstruction, masked-field prediction, or a physics residual could be auxiliary signals, but the delayed true target is more direct and normally preferable.
 
 ### 3.3 TENT (Wang et al., ICLR 2021)
 
 [TENT](https://openreview.net/forum?id=uXl3bZLkr3c) made fully test-time adaptation simple and popular. It minimizes predictive entropy
 
-\[
+$$
 H(p_\theta(y\mid x))=-\sum_c p_c\log p_c
-\]
+$$
 
 and typically updates only the affine scale/shift parameters of normalization layers. Low entropy means a more confident classifier.
 
-**Why it mattered:** no source data, no target labels, no source-training modification, and a small update set.  
-**Failure mode:** confidence is not correctness. In classification, entropy minimization can reinforce a wrong prediction; in regression such as velocity forecasting, there is no natural softmax class entropy, so the literal objective is inappropriate.  
+**Why it mattered:** no source data, no target labels, no source-training modification, and a small update set.
+**Failure mode:** confidence is not correctness. In classification, entropy minimization can reinforce a wrong prediction; in regression such as velocity forecasting, there is no natural softmax class entropy, so the literal objective is inappropriate.
 **Transferable lesson:** adapt a restricted, cheap parameter subset and monitor whether updates are trustworthy.
 
 ### 3.4 Single-sample and augmentation-based adaptation: MEMO (2022)
 
-[MEMO](https://arxiv.org/abs/2110.09506) handles the case where one test point is available. It creates several valid augmentations \(a_i(x)\), averages the predictive distributions, and minimizes the entropy of that marginal prediction:
+[MEMO](https://arxiv.org/abs/2110.09506) handles the case where one test point is available. It creates several valid augmentations $a_i(x)$, averages the predictive distributions, and minimizes the entropy of that marginal prediction:
 
-\[
+$$
 \bar p=\frac{1}{K}\sum_{i=1}^{K}p_\theta(y\mid a_i(x)), \qquad L=H(\bar p).
-\]
+$$
 
 It encourages invariance across augmentations and confidence. It is general for probabilistic models but costs many forward passes. For fluid fields, arbitrary image transformations are physically dangerous: rotating, flipping, or cropping can change boundary conditions and flow direction. Only transformations that preserve the problem's physics should be considered.
 
@@ -107,7 +107,7 @@ It encourages invariance across augmentations and confidence. It is general for 
 
 [T3A](https://papers.nips.cc/paper_files/paper/2021/hash/1415fe9fea0fa1e45dddcff5682239a0-Abstract.html) keeps the feature extractor fixed and adjusts class prototypes/templates using confident target features. [LAME](https://arxiv.org/abs/2201.05718) adapts predictions by graph-based Laplacian-adjusted maximum likelihood rather than gradient-updating model parameters.
 
-**Importance:** these methods demonstrate a useful principle for strict runtime budgets: store/update a small state outside the main model rather than backpropagating through a large network.  
+**Importance:** these methods demonstrate a useful principle for strict runtime budgets: store/update a small state outside the main model rather than backpropagating through a large network.
 **RealPDE analogue:** an output bias/scale correction, low-rank adapter, residual corrector, or small temporal calibration state can be safer and faster than modifying the full neural operator.
 
 ---
@@ -118,66 +118,66 @@ The field can be organized by *what changes at test time*. The categories below 
 
 ### A. Normalization adaptation
 
-**State changed:** BN running mean/variance and sometimes affine parameters \(\gamma,\beta\).  
-**Signal:** target activation statistics, optionally entropy.  
-**Cost:** very low to low.  
+**State changed:** BN running mean/variance and sometimes affine parameters $\gamma,\beta$.
+**Signal:** target activation statistics, optionally entropy.
+**Cost:** very low to low.
 **Representative:** AdaBN-style statistical replacement, TENT, robust BN schemes in [RoTTA](https://arxiv.org/abs/2303.13899).
 
-**Strengths:** easy, fast, little memory, preserves most pretrained weights.  
+**Strengths:** easy, fast, little memory, preserves most pretrained weights.
 **Risks:** a tiny/correlated batch is not a population; running statistics can chase a changing stream. CNO/FNO/transformer architectures may not expose conventional BN parameters, so applicability is architecture-dependent.
 
 ### B. Entropy minimization and information maximization
 
-**State changed:** a subset or all model parameters.  
-**Signal:** make predictions confident; some variants also encourage diverse predictions across a batch to avoid one-class collapse.  
-**Cost:** at least one backward pass per update.  
+**State changed:** a subset or all model parameters.
+**Signal:** make predictions confident; some variants also encourage diverse predictions across a batch to avoid one-class collapse.
+**Cost:** at least one backward pass per update.
 **Representative:** TENT; source-free [SHOT](https://arxiv.org/abs/2002.08546); robust/stable [SAR](https://arxiv.org/abs/2302.12400).
 
-**Strengths:** label-free and broadly applicable to probabilistic classifiers.  
+**Strengths:** label-free and broadly applicable to probabilistic classifiers.
 **Risks:** minimized entropy can yield confidently wrong predictions, class collapse, and unsafe parameter drift. For continuous vector fields, one must invent a replacement signal; direct delayed MSE is stronger whenever a past target is available.
 
 ### C. Pseudo-label self-training and teacher–student methods
 
-**State changed:** student model; teacher may be an exponential moving average (EMA).  
-**Signal:** the model/teacher's confident predictions become temporary labels; augmentation consistency is often added.  
+**State changed:** student model; teacher may be an exponential moving average (EMA).
+**Signal:** the model/teacher's confident predictions become temporary labels; augmentation consistency is often added.
 **Representative:** [CoTTA](https://arxiv.org/abs/2203.13591), RoTTA.
 
 CoTTA averages predictions over augmentations, maintains an EMA teacher, and randomly restores a small fraction of weights to their source values. The restoration is a direct answer to long-run forgetting.
 
-**Strengths:** can exploit a stream and smooth noisy pseudo-labels.  
+**Strengths:** can exploit a stream and smooth noisy pseudo-labels.
 **Risks:** an early wrong teacher can teach the student the wrong thing; multiple augmentations/teacher copies add latency and memory. In RealPDE, real delayed labels remove much of the reason to trust pseudo-labels.
 
 ### D. Consistency, reconstruction, and masked/self-supervised objectives
 
-**State changed:** selected parameters or a small test-time head.  
-**Signal:** predictions should agree under valid transformations, reconstruct masked input portions, or satisfy an auxiliary task.  
+**State changed:** selected parameters or a small test-time head.
+**Signal:** predictions should agree under valid transformations, reconstruct masked input portions, or satisfy an auxiliary task.
 **Representative:** original TTT; MEMO; many masked-image-modeling variants.
 
-**Strengths:** usable without labels and can work at batch size one.  
+**Strengths:** usable without labels and can work at batch size one.
 **Risks:** proxy-task improvement may be unrelated to prediction improvement. Every augmentation has to respect domain semantics—an especially strong constraint for PDE fields.
 
 ### E. Feature/distribution alignment
 
-**State changed:** feature extractor, normalizer, or an input transformation.  
-**Signal:** align target feature moments, covariances, source prototypes, or stored source statistics.  
+**State changed:** feature extractor, normalizer, or an input transformation.
+**Signal:** align target feature moments, covariances, source prototypes, or stored source statistics.
 **Representative:** [CAFe](https://arxiv.org/abs/2204.13263) aligns covariance-aware feature statistics.
 
-**Strengths:** directly targets representation shift; precomputed source summaries can be stored without source examples.  
+**Strengths:** directly targets representation shift; precomputed source summaries can be stored without source examples.
 **Risks:** alignment assumes the target should resemble source features; it can be wrong under semantic/concept shift. Covariance estimates are noisy in low-batch settings.
 
 ### F. Memory banks and replay-like mechanisms
 
-**State changed:** usually a small memory plus model parameters.  
-**Signal:** a curated buffer of recent, diverse, confident, or class-balanced test examples supports more stable updates.  
+**State changed:** usually a small memory plus model parameters.
+**Signal:** a curated buffer of recent, diverse, confident, or class-balanced test examples supports more stable updates.
 **Representative:** RoTTA; [ResiTTA](https://arxiv.org/abs/2401.14619).
 
-**Strengths:** counters the fact that consecutive stream samples are correlated and a single mini-batch is unrepresentative.  
+**Strengths:** counters the fact that consecutive stream samples are correlated and a single mini-batch is unrepresentative.
 **Risks:** stale memory harms responsiveness; memory selection itself can amplify biased/confident mistakes; strict competition limits make large buffers unattractive.
 
 ### G. Regularized, selective, and safe parameter updates
 
-**State changed:** restricted parameters, with a penalty or recovery mechanism.  
-**Signal:** standard TTA loss plus a stability constraint.  
+**State changed:** restricted parameters, with a penalty or recovery mechanism.
+**Signal:** standard TTA loss plus a stability constraint.
 **Representative:** [EATA](https://arxiv.org/abs/2204.02610), SAR, CoTTA.
 
 EATA selects reliable/non-redundant samples before entropy adaptation and uses a Fisher-information regularizer to protect important source parameters. SAR filters unreliable samples, uses sharpness-aware optimization, and has an episodic recovery mechanism when instability is detected.
@@ -186,22 +186,22 @@ EATA selects reliable/non-redundant samples before entropy adaptation and uses a
 
 ### H. Parameter-efficient modules: adapters, prompts, and low-rank updates
 
-**State changed:** a small adapter, a prompt, normalization affine values, or low-rank parameters—not the backbone.  
-**Signal:** entropy, consistency, pseudo-labels, or supervision.  
+**State changed:** a small adapter, a prompt, normalization affine values, or low-rank parameters—not the backbone.
+**Signal:** entropy, consistency, pseudo-labels, or supervision.
 **Representative:** [Test-time Prompt Tuning (TPT)](https://arxiv.org/abs/2209.07511) for CLIP optimizes prompt context using entropy over augmentations.
 
-**Strengths:** small state, lower forgetting risk, easier reset, and low optimizer memory.  
-**Risks:** capacity may be inadequate for a large physical shift; prompt-specific work does not transfer directly to neural operators.  
+**Strengths:** small state, lower forgetting risk, easier reset, and low optimizer memory.
+**Risks:** capacity may be inadequate for a large physical shift; prompt-specific work does not transfer directly to neural operators.
 **RealPDE relevance:** a residual adapter added around the pretrained forecast is an attractive first design because it is fast, resettable, and limits damage to the base model.
 
 ### I. Test-time inference, ensembling, and sampling rather than weight updates
 
-**State changed:** no weights; computation or prediction aggregation changes.  
-**Signal:** multiple augmentations, model ensemble, Bayesian posterior approximation, or a learned cache.  
+**State changed:** no weights; computation or prediction aggregation changes.
+**Signal:** multiple augmentations, model ensemble, Bayesian posterior approximation, or a learned cache.
 **Examples:** test-time augmentation, MC dropout, temporal ensembling, and the test-time operator-search approach in [Serrano et al., 2026](https://arxiv.org/abs/2602.00884).
 
-**Strengths:** avoids catastrophic forgetting.  
-**Risks:** compute cost can dominate; it may not correct a persistent bias.  
+**Strengths:** avoids catastrophic forgetting.
+**Risks:** compute cost can dominate; it may not correct a persistent bias.
 **RealPDE relevance:** lightweight ensembles can estimate uncertainty for SPS, but repeated full neural-operator passes can hurt the time score.
 
 ---
@@ -227,23 +227,23 @@ CoTTA's EMA teacher, augmentation averaging, and stochastic source-weight restor
 
 ### 6.1 Entropy is not the native objective
 
-Classification methods output a categorical distribution \(p(y\mid x)\), so entropy is straightforward. A flow forecaster outputs a continuous tensor \(\hat y\in\mathbb{R}^{T\times H\times W\times C}\). If a model does not output a calibrated probability distribution, “minimize entropy” needs an artificial construction and can simply shrink predicted variation—bad for turbulence metrics.
+Classification methods output a categorical distribution $p(y\mid x)$, so entropy is straightforward. A flow forecaster outputs a continuous tensor $\hat y\in\mathbb{R}^{T\times H\times W\times C}$. If a model does not output a calibrated probability distribution, “minimize entropy” needs an artificial construction and can simply shrink predicted variation—bad for turbulence metrics.
 
-For RealPDE, once \(y_{t-1}\) is available, a direct loss is valid:
+For RealPDE, once $y_{t-1}$ is available, a direct loss is valid:
 
-\[
+$$
 L_{\mathrm{MSE}}=\frac{1}{N}\sum_i(\hat y_i-y_i)^2.
-\]
+$$
 
 Better task-aware variants may combine velocity error with terms aligned to the scoreboard (for example, temporal variance/TKE or probe-profile terms), but any such loss needs careful validation to avoid trading one metric against another.
 
 ### 6.2 Causality and delayed supervision
 
-Forecasting is not a generic unordered test set. The update at step \(t\) can use only previous windows:
+Forecasting is not a generic unordered test set. The update at step $t$ can use only previous windows:
 
-\[
+$$
 \theta_t = U(\theta_{t-1},x_{t-1},y_{t-1}),\quad \hat y_t=f_{\theta_t}(x_t).
-\]
+$$
 
 This is a stronger, cleaner signal than pseudo-labels, but one window is still noisy and may be non-representative. It motivates delayed-label online learning ideas: recency-weighted errors, change-point/update triggers, trust regions around the initial model, and small adaptive heads.
 
@@ -251,9 +251,9 @@ This is a stronger, cleaner signal than pseudo-labels, but one window is still n
 
 For a nominally incompressible two-dimensional velocity field, a possible diagnostic is the divergence residual:
 
-\[
+$$
 \nabla\cdot\mathbf{u}=\partial u/\partial x+\partial v/\partial y\approx0.
-\]
+$$
 
 One might penalize this on predictions or use it as a quality gate. However, this is not automatically a good loss: PIV noise, boundaries, masking around the airfoil, grid spacing, and the 2D measurement of a potentially 3D flow all affect the residual. Treat it as a carefully tested regularizer/diagnostic, never as proof that a prediction is correct.
 
@@ -287,10 +287,10 @@ For this task, a reasonable first research baseline is to collect per-element or
 
 ### High-value ideas to test first
 
-1. **Frozen pretrained base + small supervised residual adapter.** Keep \(f_{\theta_0}\) fixed and learn \(g_\phi\) where \(\hat y=f_{\theta_0}(x)+g_\phi(x)\). Reset \(\phi\) per trajectory. This imports the parameter-efficient/safe-update principle while exploiting valid delayed targets.
+1. **Frozen pretrained base + small supervised residual adapter.** Keep $f_{\theta_0}$ fixed and learn $g_\phi$ where $\hat y=f_{\theta_0}(x)+g_\phi(x)$. Reset $\phi$ per trajectory. This imports the parameter-efficient/safe-update principle while exploiting valid delayed targets.
 2. **Selective updates.** Gate updates by recent loss, gradient norm, change in input statistics, or a held-out portion of the prior window. EATA/SAR motivate refusing unreliable updates; use actual previous-target error rather than classifier entropy.
-3. **Anchored updates.** Penalize change from initialization, \(\lambda\|\phi-\phi_0\|^2\), or periodically interpolate back toward the checkpoint. This is the direct analogue of anti-forgetting restoration.
-4. **Update schedule as a control policy.** Compare no update, every step, every \(k\) steps, and evidence-triggered updates. The Time score makes an “update only when worthwhile” policy especially relevant.
+3. **Anchored updates.** Penalize change from initialization, $\lambda\|\phi-\phi_0\|^2$, or periodically interpolate back toward the checkpoint. This is the direct analogue of anti-forgetting restoration.
+4. **Update schedule as a control policy.** Compare no update, every step, every $k$ steps, and evidence-triggered updates. The Time score makes an “update only when worthwhile” policy especially relevant.
 5. **Chronological uncertainty calibration.** Estimate interval width from past residuals only, with a small recent buffer and a trajectory reset. This addresses SPS without pretending that default percentage bands are calibrated.
 
 ### Ideas that are tempting but need extra skepticism
