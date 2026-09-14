@@ -153,11 +153,13 @@ def main() -> None:
                     help="directory containing submission.py (default: src/solution)")
     ap.add_argument("--data", default=str(ROOT / "data" / "example"),
                     help="PIV data directory (default: data/example)")
+    ap.add_argument("--device", default=None,
+                    help="cpu or cuda (default: cuda if available, else cpu)")
     args = ap.parse_args()
 
     submission_dir = Path(args.submission).resolve()
     data_dir = Path(args.data).resolve()
-    device = "cpu"
+    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
 
     stats_path = data_dir / "mean_std_real.pt"
     if not stats_path.exists():
@@ -204,7 +206,10 @@ def main() -> None:
 
         prev_pair = (inp_norm.detach(), tgt_norm.detach())  # cache AFTER timing
 
-        pred_norm = torch.as_tensor(pred_norm)
+        # Bring the prediction back to CPU regardless of what device the
+        # submission computed it on -- the normalizer's stats are CPU
+        # tensors (loaded once, tiny, no need to move them per-device).
+        pred_norm = torch.as_tensor(pred_norm).cpu()
         if expected_shape is None:
             expected_shape = tuple(tgt_norm.shape)
         if tuple(pred_norm.shape) != expected_shape:
@@ -251,8 +256,8 @@ def main() -> None:
         tgts.append(tgt.squeeze(0).cpu().numpy().astype(np.float32))
 
         if has_bounds:
-            lower_norm = torch.as_tensor(lower_val)
-            upper_norm = torch.as_tensor(upper_val)
+            lower_norm = torch.as_tensor(lower_val).cpu()
+            upper_norm = torch.as_tensor(upper_val).cpu()
             if tuple(lower_norm.shape) != expected_shape or tuple(upper_norm.shape) != expected_shape:
                 raise SystemExit(
                     f"ttt_step returned SPS bounds shape {tuple(lower_norm.shape)}/"
