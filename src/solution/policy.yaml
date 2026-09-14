@@ -16,12 +16,19 @@ ema_beta: 0.7
 adapt_steps: 5
 adapt_lr: 0.001
 adapt_scope: bn       # bn (norm layers only) | all
+anchor_lambda: 0.01   # pulls adapted params back toward checkpoint init each step
 
 # recalibrate knob
 calib_momentum: 0.5
 
 # per-trajectory wall-clock budget for everything inside ttt_step
 time_budget_s: 60.0
+
+# SPS interval bounds: half-width = sps_k * (recent residual EMA, sigma_global
+# units), clamped to [sps_min_sigma, sps_max_sigma] * sigma_global
+sps_k: 2.0
+sps_min_sigma: 0.25
+sps_max_sigma: 3.0
 
 # mode: llm -- action selection through the organizer gateway
 # (OPENAI_BASE_URL / OPENAI_API_KEY / REALPDE_GATEWAY_MODEL are injected by the
