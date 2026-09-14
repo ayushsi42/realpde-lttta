@@ -21,10 +21,15 @@ Controller state -> bounded action, once per step:
   action in {skip_update, recalibrate, update_adapter}
 
 ``update_adapter`` runs a few SGD steps on the revealed previous (input,
-target) pair (scope ``bn`` = norm-layer parameters only, or ``all``);
-``recalibrate`` maintains a cheap additive output correction; ``skip_update``
-does nothing. Everything inside ``ttt_step`` counts toward the Time metric,
-including LLM latency, so the policy budgets both.
+target) pair (scope ``bn`` = norm-layer parameters only, or ``all``), with an
+``anchor_lambda``-weighted L2 pull back toward the checkpoint's own values so
+a long run of updates can't drift arbitrarily far from it; ``recalibrate``
+maintains a cheap additive output correction; ``skip_update`` does nothing.
+Every step also returns ``info["lower"]``/``info["upper"]`` SPS bounds sized
+from a rolling residual estimate (see ``_sps_bounds``), rather than leaving
+the scorer to fall back on its default band. Everything inside ``ttt_step``
+counts toward the Time metric, including LLM latency, so the policy budgets
+both.
 
 Files expected next to this one: ``policy.yaml`` (knobs) and optionally
 ``model.pth`` (a real base checkpoint; see the kit's ``load_baseline.py`` --
@@ -52,6 +57,16 @@ IN_STEP = 20
 CHANNELS = 3
 ACTIONS = ("skip_update", "recalibrate", "update_adapter")
 
+# Official real-data channel stats (data/example/mean_std_real.pt's std_tgt,
+# season-fixed per docs/metrics.md). SIGMA_GLOBAL is exactly their mean --
+# (0.09681040793657303 + 0.015963643789291382) / 2 == 0.0563870 -- matching
+# the frozen constant the scorer normalizes SPS interval width by, which
+# confirms how that constant is defined and lets us convert between it and
+# per-channel normalized-space widths below.
+STD_TGT_U = 0.09681040793657303
+STD_TGT_V = 0.015963643789291382
+SIGMA_GLOBAL = 0.0563870
+
 DEFAULT_POLICY: Dict[str, Any] = {
     "mode": "rule",            # rule | llm | fixed
     "fixed_action": "skip_update",
@@ -62,11 +77,15 @@ DEFAULT_POLICY: Dict[str, Any] = {
     "adapt_steps": 5,
     "adapt_lr": 1e-3,
     "adapt_scope": "bn",       # bn | all
+    "anchor_lambda": 0.01,     # update_adapter: pull adapted params toward checkpoint init
     "calib_momentum": 0.5,
     "time_budget_s": 60.0,     # per-trajectory ttt_step wall-clock budget
     "llm_every": 5,            # ask the LLM every k-th step (latency control)
     "llm_timeout_s": 5.0,
     "llm_max_tokens": 128,
+    "sps_k": 2.0,              # SPS half-width = k * recent residual EMA (in sigma_global units)
+    "sps_min_sigma": 0.25,     # clamp: half-width >= this many sigma_global
+    "sps_max_sigma": 3.0,      # clamp: half-width <= this many sigma_global
 }
 
 
@@ -191,12 +210,17 @@ class AgenticTTTModel(TTTModel):
     # ---- contract -------------------------------------------------------
     def reset_ttt_state(self) -> None:
         self.base.load_state_dict(copy.deepcopy(self._init_state))
-        self._opt = torch.optim.SGD(self._adapt_params(), lr=float(self.policy["adapt_lr"]))
+        adapt_params = self._adapt_params()
+        self._opt = torch.optim.SGD(adapt_params, lr=float(self.policy["adapt_lr"]))
+        # Anchor targets for update_adapter's drift penalty: the same params'
+        # values right after this reset, i.e. the checkpoint's own weights.
+        self._anchor_values = [p.detach().clone() for p in adapt_params]
         self._prev_input: Optional[torch.Tensor] = None
         self._prev_pred: Optional[torch.Tensor] = None
         self._calib = torch.zeros(1, device=self.device)
         self._err_ema: Optional[float] = None
         self._err_prev_ema: Optional[float] = None
+        self._resid_ema: Optional[float] = None
         self._step = 0
         self._spent_s = 0.0
 
@@ -220,10 +244,19 @@ class AgenticTTTModel(TTTModel):
     def _apply(self, action: str, prev_target: torch.Tensor) -> Optional[float]:
         if action == "update_adapter" and self._prev_input is not None:
             self.base.train()
+            lam = float(self.policy["anchor_lambda"])
+            adapt_params = self._opt.param_groups[0]["params"]
             loss_val = None
             for _ in range(max(int(self.policy["adapt_steps"]), 1)):
                 self._opt.zero_grad()
                 loss = torch.mean((self.base(self._prev_input) - prev_target) ** 2)
+                if lam > 0.0:
+                    # Pull adapted params back toward the checkpoint's own
+                    # values, so a long run of update_adapter steps can't
+                    # drift the model arbitrarily far from what it started as.
+                    anchor = sum(torch.mean((p - a) ** 2)
+                                 for p, a in zip(adapt_params, self._anchor_values))
+                    loss = loss + lam * anchor / max(len(adapt_params), 1)
                 loss.backward()
                 self._opt.step()
                 loss_val = float(loss.detach().cpu())
@@ -234,6 +267,28 @@ class AgenticTTTModel(TTTModel):
             self._calib = (1.0 - m) * self._calib + m * bias
             return float(torch.mean((self._prev_pred - prev_target) ** 2).cpu())
         return None
+
+    def _sps_bounds(self, pred_norm: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Symmetric per-channel SPS interval around pred_norm.
+
+        Half-width = sps_k * (recent residual EMA, default 1.0 before any
+        signal exists) in sigma_global units, clamped to
+        [sps_min_sigma, sps_max_sigma] * sigma_global, then converted from
+        that raw physical scale to each channel's normalized-space width by
+        dividing by its own std (so u and v -- very different physical
+        scales -- get correctly different normalized widths for the same
+        raw-space uncertainty).
+        """
+        p = self.policy
+        resid = self._resid_ema if self._resid_ema is not None else 1.0
+        raw_half = float(p["sps_k"]) * resid * SIGMA_GLOBAL
+        raw_half = min(max(raw_half, float(p["sps_min_sigma"]) * SIGMA_GLOBAL),
+                        float(p["sps_max_sigma"]) * SIGMA_GLOBAL)
+        half = torch.zeros_like(pred_norm)
+        half[..., 0] = raw_half / STD_TGT_U
+        half[..., 1] = raw_half / STD_TGT_V
+        half[..., 2] = raw_half / STD_TGT_U  # p is never scored; reuse u's scale
+        return pred_norm - half, pred_norm + half
 
     def ttt_step(
         self,
@@ -247,9 +302,13 @@ class AgenticTTTModel(TTTModel):
         if prev_target_norm is not None and self._prev_pred is not None:
             prev_target_norm = torch.as_tensor(prev_target_norm).to(self.device)
             err = _rel_l2(self._prev_pred, prev_target_norm)
+            resid = float(torch.mean(
+                torch.abs(self._prev_pred[..., :2] - prev_target_norm[..., :2])
+            ).detach().cpu())
             beta = float(self.policy["ema_beta"])
             self._err_prev_ema = self._err_ema
             self._err_ema = err if self._err_ema is None else beta * self._err_ema + (1 - beta) * err
+            self._resid_ema = resid if self._resid_ema is None else beta * self._resid_ema + (1 - beta) * resid
             slope = 0.0 if self._err_prev_ema is None else self._err_ema - self._err_prev_ema
             budget_left = float(self.policy["time_budget_s"]) - self._spent_s
             if budget_left <= 0.5:
@@ -262,15 +321,15 @@ class AgenticTTTModel(TTTModel):
         with torch.no_grad():
             pred_norm = self.base(input_norm) + self._calib
 
+        lower, upper = self._sps_bounds(pred_norm.detach())
+
         self._prev_input = input_norm.detach()
         self._prev_pred = pred_norm.detach()
         self._step += 1
         self._spent_s += time.perf_counter() - t0
-        # The evaluator also accepts optional info["lower"] / info["upper"] SPS
-        # bounds are optional; `action` /
-        # `source` here are local-debug fields (log them yourself if useful)
-        # and are ignored on the platform, so this demo keeps info minimal.
-        return pred_norm, {"adapt_loss": adapt_loss}
+        # `action` / `source` are local-debug fields (log them yourself if
+        # useful) and are ignored on the platform, so this keeps info minimal.
+        return pred_norm, {"adapt_loss": adapt_loss, "lower": lower, "upper": upper}
 
 
 def _build_base(submission_dir: str, device: str, policy: Dict[str, Any]) -> nn.Module:
