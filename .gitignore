@@ -4,6 +4,7 @@ __pycache__/
 /checkpoints/
 /data/train_real.tar.gz*
 /data/train_real/
+/data/train_real_holdout/
 /data/train_sim.tar.gz*
 /data/train_sim/
 /outputs/
