@@ -119,10 +119,29 @@ Honest snapshot as of this writing:
 
 - The repository is restructured into a standard `src/` / `scripts/` / `docs/` layout, and the active bounded controller (`src/solution/submission.py`) runs end-to-end.
 - All three real-finetuned baseline checkpoints (CNO 31 MB, Transolver 48 MB, fp16 FNO 192 MB) have been downloaded and load correctly through `load_baseline.py`.
-- The full real training archive (`data/train_real.tar.gz`, ~7.4 GB) and the simulated pretraining archive (`data/train_sim.tar.gz`, ~8.2 GB) have been downloaded but **have not yet been extracted or inspected**.
-- **No evaluation against real held-out PIV trajectories has been run yet**, for either the frozen baselines or the adaptation controller. The only numbers produced so far come from `python3 scripts/local_eval.py` against the two tiny bundled synthetic trajectories in `data/example/` — that is a shape/plumbing smoke test, not a benchmark, and its subscores are explicitly not leaderboard-comparable (confirmed by re-running it: 4 steps over 2 trajectories, mean per-step time ~130 ms, and Rel-L2/TKE/MVPE/Time/SPS subscores computed by the real `scoring.py` on synthetic data only).
+- The full real training archive (`data/train_real.tar.gz`, ~7.4 GB, 82 independent PIV trajectories named `{re}_{aoa}.h5`) has been extracted and inspected; `data/train_sim.tar.gz` remains untouched (not needed yet, and disk-constrained on the dev machine). A deterministic, whole-trajectory split (`scripts/split_real_data.py`, sorted by `(re, aoa)` — never random, never window-level, so no window from a held-out trajectory can leak into training/threshold-picking) holds out 11 real trajectories (`re in {24150, 25425, 26700}`, 433 streaming steps) for validation — manifest in `outputs/real_data_split.json`.
+- **Real frozen-baseline numbers now exist** for all three checkpoints on that held-out real slice (via `scripts/local_eval.py` scored with the real `scripts/scoring.py`, CPU wall-clock timing; full detail and reproduce commands in [`docs/real_baseline_results.md`](docs/real_baseline_results.md)):
+
+  | Model | rel_l2_score | tke_score | mvpe_score | time_score | sps_score |
+  |---|---|---|---|---|---|
+  | CNO (31 MB) | 95.245 | 73.189 | 96.009 | 29.403 | 27.604 |
+  | Transolver (48 MB) | 93.495 | 70.560 | 94.633 | 30.531 | 18.735 |
+  | FNO fp16 (192 MB) | **96.638** | **77.308** | **97.587** | **54.006** | **36.364** |
+
+  FNO fp16 wins on every subscore and runs roughly 7–8x faster per step on
+  CPU than CNO/Transolver — contrary to the earlier "default to CNO because
+  it's smallest" assumption. A Phase 2 stretch run of the anchored adapter
+  (`mode: rule`, untuned `policy.yaml` defaults) against that same FNO
+  checkpoint and held-out trajectories scored *worse* on all five subscores
+  than the frozen baseline (rel_l2 94.811, tke 74.661, mvpe 95.398, time
+  37.880, sps 21.000) — a concrete, honest signal that the controller's
+  default thresholds need real tuning before adaptation is worth shipping.
 - No submission has been made to Codabench, and no leaderboard score exists.
-- The adapter's anchor loss and SPS bound logic have been implemented and exercised on synthetic data, but `policy.yaml`'s thresholds (`err_low`, `err_high`, `adapt_lr`, `anchor_lambda`, …) are still defaults, not tuned against real validation trajectories.
+- The adapter's anchor loss and SPS bound logic now run correctly end-to-end
+  on real data (see above), but `policy.yaml`'s thresholds (`err_low`,
+  `err_high`, `adapt_lr`, `anchor_lambda`, …) are still template defaults and,
+  per the result above, are not yet net-positive on real data — tuning
+  against the real held-out split remains open.
 
 See [ROADMAP.md](ROADMAP.md) for exactly what's next and why.
 
