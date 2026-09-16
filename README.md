@@ -1,9 +1,9 @@
 # RealPDE Track 2 — LTTTA
 *A bounded, timed test-time adaptation controller for streaming real-world PIV airfoil-wake forecasting*
 
-![python](https://img.shields.io/badge/python-3.10%2B-blue)
-![competition](https://img.shields.io/badge/competition-NeurIPS%202026-blueviolet)
-![status](https://img.shields.io/badge/status-in--development-yellow)
+[![python](https://img.shields.io/badge/python-3.10%2B-blue)](#requirements)
+[![competition](https://img.shields.io/badge/competition-NeurIPS%202026-blueviolet)](#overview)
+[![status](https://img.shields.io/badge/status-in--development-yellow)](#current-status)
 
 ## Overview
 
