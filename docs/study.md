@@ -213,6 +213,9 @@ base, not derive the math.
 Goal: build a mental model of *why* naive per-step gradient updates on a
 streaming target are risky, and what the standard mitigations are, so you can
 evaluate (not necessarily copy) the `agentic_demo` controller's approach.
+See `docs/literature_review_test_time_adaptation.md` for the foundational
+(image-classification-origin) ideas, then `docs/literature_review_tta_time_series.md`
+for the closer analogue: TTA research on time series forecasting specifically.
 - **TENT** — Wang et al., "Tent: Fully Test-Time Adaptation by Entropy
   Minimization" (arXiv 2006.10726). Foundational TTA paper; read for the
   general idea of adapting only specific parameters (e.g. batch-norm) rather

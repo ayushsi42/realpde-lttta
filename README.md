@@ -1,197 +1,148 @@
-# RealPDE Track 2 LTTTA Starting Kit v6
+# RealPDE Track 2 — LTTTA
+*A bounded, timed test-time adaptation controller for streaming real-world PIV airfoil-wake forecasting*
 
-This kit contains the minimal files to build a Codabench submission for Track 2:
-Long-Term Test-Time Adaptation on streaming real-world PIV data.
+![python](https://img.shields.io/badge/python-3.10%2B-blue)
+![competition](https://img.shields.io/badge/competition-NeurIPS%202026-blueviolet)
+![status](https://img.shields.io/badge/status-in--development-yellow)
 
-> **Project layout:** this follows a conventional ML layout. Edit only
-> `src/solution/`; use Git branches for experiments. `data/` and `checkpoints/`
-> are local and ignored by Git, while `outputs/` holds generated artifacts.
+## Overview
+
+This repository is an entry for **RealPDE Track 2: Long-Term Test-Time Adaptation (LTTTA)**, a NeurIPS 2026 competition track on adapting neural-operator PDE surrogates (CNO / FNO / Transolver) to streaming real-world particle image velocimetry (PIV) airfoil-wake flow data. The contract is deliberately hostile to naive fine-tuning: at each streaming step the model only ever sees the *previous* window's true target (delayed supervision, never the current one), every line of code inside `ttt_step` is wall-clock timed against a hard 10-minute per-trajectory cap, and the packaged submission archive must stay under 256 MB. The active solution is a bounded controller — adapted from the upstream [agentic_LTTTA](https://github.com/PgUpDn/agentic_LTTTA) baseline — that chooses, once per step, between skipping adaptation, recalibrating an output bias, or running a few anchored gradient steps, rather than blindly gradient-stepping on every noisy window.
+
+## Key Features
+
+- **Bounded action controller** (`skip_update` / `recalibrate` / `update_adapter`) driven by an EMA of the previous window's revealed relative-L2 error, so adaptation only fires when it's actually warranted.
+- **Anchored adapter updates** — `update_adapter` runs a few SGD steps on the genuine previous `(input, target)` pair with an `anchor_lambda`-weighted L2 pull back toward the checkpoint's own weights, so a long run of updates can't drift arbitrarily far from the pretrained solution.
+- **Offline-design / online-execution split** — all thresholds (`err_low`, `err_high`, `adapt_lr`, `anchor_lambda`, …) live in `src/solution/policy.yaml`, tuned offline and read deterministically at evaluation time under `mode: rule`.
+- **Optional LLM-driven action selection** (`mode: llm`) through the organizer-provided gateway (auto-detected from injected `OPENAI_*` env vars), with a safe, deterministic rule-based fallback on any missing env, timeout, or malformed reply — the LLM can never crash the run.
+- **Safe Prediction Score (SPS) bounds** returned every step, sized from a rolling residual EMA and converted to each channel's own normalized scale, instead of leaving the scorer to fall back on its default ±5% band.
+- **Submission packaging pipeline** (`scripts/make_submission.py`) that stages the solution, injects a checkpoint, re-runs the local evaluator against the staged copy, checks the 256 MB extracted-size cap, and re-imports the zip exactly as the official evaluator does before calling it done.
+- **fp16 checkpoint packer** (`scripts/pack_ckpt_fp16.py`, complex-tensor safe) so the 403 MB fp32 FNO checkpoint fits under the size cap.
+
+## How It Works
+
+Each streaming step follows the same causal loop: adapt on what was just revealed, then predict the current window without peeking at its answer.
 
 ```text
-src/          Python source: active solution, baseline loader, vendored models
-data/         local example and training PIV data (Git-ignored)
-checkpoints/  local pretrained weights (Git-ignored)
-scripts/      run evaluation, package a ZIP, visualize data, pack checkpoints
-docs/         task contract, metrics, study notes, literature review
-outputs/      generated submission ZIPs and visualizations (Git-ignored)
+step t:
+  1. reveal y_(t-1)          -- the ONLY new ground truth available this step
+  2. score  ŷ_(t-1) vs y_(t-1)  -> rel-L2 error, EMA + slope
+  3. controller decides one bounded action:
+        err < err_low   -> skip_update      (do nothing)
+        err > err_high  -> update_adapter   (few anchored SGD steps on
+                                              cached x_(t-1), revealed y_(t-1))
+        else            -> recalibrate      (cheap additive bias correction)
+     [mode: llm asks the organizer gateway for the action instead, every
+      llm_every-th step, with a rule-based fallback on any failure]
+  4. predict ŷ_t = base(x_t) + calibration_bias   (no grad, no current target)
+  5. emit SPS lower/upper bounds from a rolling residual estimate
+  6. cache x_t for step t+1; everything above is wall-clock timed
 ```
 
-## Files
+`reset_ttt_state()` fires at every trajectory boundary: it restores the checkpoint's original weights and clears all controller/adapter state so each trajectory starts identically.
 
-- `src/solution/`: the active submission: edit `submission.py` and its
-  optional `policy.yaml` as the project advances.
-- `src/ttt_model.py`: optional convenience base class for the TTT interface.
-- `scripts/local_eval.py`: run a CPU smoke test against the bundled `data/example`, and
-  report the real subscores using the bundled `scoring.py`.
-- `scripts/scoring.py`: the official scoring program (the exact leaderboard formulas).
-  Run it yourself on real data, or let `scripts/local_eval.py` call it.
-- `scripts/pack_ckpt_fp16.py`: pack an fp32 checkpoint to fp16 to fit the size limit.
-- `src/load_baseline.py`: build CNO / FNO / Transolver and load an official
-  checkpoint, ready to wrap as your TTT base model (see "Baseline Models").
-- `src/rpde_baselines/`: vendored baseline model code (renamed so it never shadows
-  the evaluator's own `realpdebench` package); imports offline.
-- `src/solution/`: currently starts from a bounded-controller adaptation of
-  [agentic_LTTTA](https://github.com/PgUpDn/agentic_LTTTA); see
-  `src/solution/README.md`.
-- `docs/interface.md`, `docs/metrics.md`: interface contract and metric summary.
-- `docs/literature_review_test_time_adaptation.md`: curated background reading
-  on test-time adaptation and its relevance to this track.
-- `scripts/visualize_piv_window.py`: generates an interactive PIV window explorer
-  under `artifacts/` (generated files are not versioned).
-- `data/example/`: two tiny synthetic trajectories + the official normalization
-  stats, for local shape checks only (regenerate with `data/example/make_example.py`).
-- `data/`: local downloaded training data only; intentionally ignored by Git.
-  `train_real.tar.gz` is a 7.39 GB download, so keep it local and extract/use it
-  from this directory rather than placing it in a submission archive.
+## Project Structure
 
-## Interface
+```text
+src/
+  solution/                 Active submission (edit here)
+    submission.py           Required entry point: get_ttt_model()
+    policy.yaml             Controller thresholds / mode (rule | llm | fixed)
+    README.md               How this maps onto the upstream agentic_LTTTA demo
+  load_baseline.py          Loads CNO / FNO / Transolver checkpoints
+  rpde_baselines/           Vendored organizer model implementations (do not edit)
+  ttt_model.py              Optional convenience base class for the TTT interface
 
-`submission.py` must define:
+scripts/
+  local_eval.py             Local streaming evaluator + real subscore printout
+  make_submission.py        Stages, packages, and verifies outputs/submissions/*.zip
+  scoring.py                Official subscore implementation (Rel-L2, TKE, MVPE, Time, SPS)
+  pack_ckpt_fp16.py         fp32 -> fp16 checkpoint packer (complex-tensor safe)
+  visualize_piv_window.py   Interactive PIV/window HTML explainer
 
-```python
-def get_ttt_model(submission_dir, device):
-    ...  # return an object with reset_ttt_state() and ttt_step()
+data/
+  example/                  Tiny tracked synthetic trajectories for shape/plumbing checks
+  train_real.tar.gz         Full real training release (local, Git-ignored, not yet inspected)
+  train_sim.tar.gz          Full simulated pretraining release (local, Git-ignored)
+
+checkpoints/                Local, Git-ignored real-finetuned CNO/FNO/Transolver weights
+docs/                       Interface contract, metrics, study guide, literature reviews, handoff notes
+outputs/                    Locally generated ZIPs/visualizations (Git-ignored)
 ```
 
-The returned object implements:
+## Getting Started
 
-- `reset_ttt_state()`: called at each trajectory start; restore checkpoint
-  weights, clear adaptation state.
-- `ttt_step(input_norm, prev_target_norm=None)`: called once per step, batch
-  size 1, on `(1, 20, 32, 64, 3)` normalized tensors. `prev_target_norm` is the
-  ground truth of the previous step (`None` on the first step). Return
-  `(pred_norm, info)`; the evaluator reads `info["adapt_loss"]` (a python float
-  or `None`) and, optionally, `info["lower"]` / `info["upper"]` for the Safe
-  Prediction Score. Any other key is ignored.
+### Requirements
 
-Evaluation is duck-typed, so subclassing `ttt_model.py` is optional. See
-`docs/interface.md` for the full contract.
+- Python 3.10+ (developed against 3.12)
+- `torch`, `numpy`, `h5py`, `pyyaml`
+- `einops` only if you exercise the Transolver baseline directly (already present in the official evaluation image)
+- No GPU required for the bundled smoke test; CUDA is used automatically if available
 
-## Local Smoke Test
-
-`scripts/local_eval.py` mirrors the official streaming loop (trajectory resets,
-prev-target passing, per-step timing) on the bundled example data, then feeds the
-predictions through the bundled `scoring.py` to print the five real subscores. It
-uses the same subscore formulas the leaderboard uses, but the numbers on the tiny
-synthetic example data are illustrative only: point `--data` at real downloaded
-data for comparable scores, and note `time_score` reflects your local wall time.
-
-The leaderboard combines them into a single `final_score`; that combination is
-not published, so no total is printed here.
+### Installation
 
 ```bash
-# run the active solution directly against the local evaluator
-python scripts/local_eval.py
-
-# or build + verify a Codabench-ready zip in one step (recommended)
-python scripts/make_submission.py
+git clone https://github.com/ayushsi42/realpde-lttta.git
+cd realpde-lttta
+pip install torch numpy h5py pyyaml
 ```
 
-`scripts/local_eval.py` mirrors the evaluator's streaming loop (the evaluator itself is
-not downloadable); for the exact submission contract, `docs/interface.md` is
-authoritative.
-
-## Evaluation Sandbox
-
-Your model runs out-of-process in an isolated subprocess. It reads your
-submission archive and the Python runtime normally, writes freely (temp files,
-caches, checkpoints), and uses torch / CUDA / numpy as usual. Only the hidden
-evaluation data (ground truth) is unreadable from disk: any attempt to open it
-is denied by the kernel. You never need it, because `ttt_step` is handed the
-normalized input and previous target directly. Of the `info` dict you return,
-the evaluator keeps `adapt_loss` and the optional `lower` / `upper` bounds; put
-nothing else load-bearing in it.
-
-## Timing
-
-Everything inside `ttt_step` is timed: adaptation on the previous pair,
-controller logic, optional LLM round-trips, and the forward pass. `reset_ttt_state`
-is timed too, charged to the step after the boundary, so moving work between the
-two changes nothing. Model construction and checkpoint loading are **not** timed;
-they run once before the stream. The Time score uses the mean per-step wall time. A separate 10-minute wall-clock
-execution limit covers the whole run (loading included), so keep loading modest.
-
-## Submission Size
-
-The extracted archive (checkpoint included) must stay under **256 MB**. If your
-fp32 checkpoint is too large, pack it to fp16:
+### Usage
 
 ```bash
-python scripts/pack_ckpt_fp16.py model_fp32.pth model.pth
+# Run the active solution against the bundled tiny synthetic example data
+python3 scripts/local_eval.py
+
+# Run a specific submission directory / data directory / device explicitly
+python3 scripts/local_eval.py --submission src/solution --data data/example --device cpu
+
+# Regenerate the interactive PIV window explainer
+python3 scripts/visualize_piv_window.py \
+  --input data/example/test_real/5025_5.h5 \
+  --output outputs/visualizations/piv_window_explorer.html
+
+# Package a real checkpoint (set base_model: cno in policy.yaml first)
+python3 scripts/make_submission.py --checkpoint sim_real_cno.pth
 ```
 
-The tool handles complex tensors safely; see its docstring for the matching
-`unpack_fp16` load helper.
+## Competition Contract
 
-## Baseline Models (pretrained checkpoints)
+- **Delayed supervision**: `ttt_step(input_norm, prev_target_norm)` only ever receives the *previous* window's ground truth (`None` on a trajectory's first step) — the current target is never available.
+- **Timing**: everything inside `ttt_step`, plus `reset_ttt_state()` (charged to the following step), is wall-clock timed and rolled into the `time_score` subscore; model construction and checkpoint loading are not timed. A separate, hard **10-minute** wall-clock limit covers the whole run per submission.
+- **Size**: the extracted submission archive (checkpoint included) must stay under **256 MB** — only one checkpoint may ship; CNO (32 MB) and Transolver (48 MB) fit easily as fp32, FNO (403 MB fp32) needs the fp16 packer (~192 MB).
+- **Tensor contract**: `(1, 20, 32, 64, 3)` normalized tensors, channels `[u, v, p]`; only `u, v` are scored on real data, `p` is zero-filled.
+- **Isolation**: the submission runs in an isolated subprocess with no access to hidden ground truth on disk; only the values handed to `ttt_step` are usable.
 
-The kit vendors the official baseline model code (`rpde_baselines/`: CNO, FNO,
-Transolver) plus `load_baseline.py`. `einops` (needed by the Transolver
-forward) is already installed in the Track 2 evaluation image, so there is
-nothing extra to ship.
+## Current Status
 
-Checkpoints are on the competition Google Drive (folder `baseline_checkpoints/`
-inside the data release, id `1Cg23DoTuSvWXR3Mm1uRfmMNAbkyaIhrQ`; not shipped in
-this kit):
+Honest snapshot as of this writing:
 
-```
-baseline_checkpoints/
-├── sim_pretrain/          # sim-only pretraining
-│   ├── sim_cno.pth
-│   ├── sim_fno.pth
-│   ├── sim_fno_fp16.pth   # fp16-packed FNO (fits the 256 MB cap)
-│   └── sim_transolver.pth
-└── sim_real_ft/           # fine-tuned on real PIV data (best starting point)
-    ├── sim_real_cno.pth
-    ├── sim_real_fno.pth
-    ├── sim_real_fno_fp16.pth
-    └── sim_real_transolver.pth
-```
+- The repository is restructured into a standard `src/` / `scripts/` / `docs/` layout, and the active bounded controller (`src/solution/submission.py`) runs end-to-end.
+- All three real-finetuned baseline checkpoints (CNO 31 MB, Transolver 48 MB, fp16 FNO 192 MB) have been downloaded and load correctly through `load_baseline.py`.
+- The full real training archive (`data/train_real.tar.gz`, ~7.4 GB) and the simulated pretraining archive (`data/train_sim.tar.gz`, ~8.2 GB) have been downloaded but **have not yet been extracted or inspected**.
+- **No evaluation against real held-out PIV trajectories has been run yet**, for either the frozen baselines or the adaptation controller. The only numbers produced so far come from `python3 scripts/local_eval.py` against the two tiny bundled synthetic trajectories in `data/example/` — that is a shape/plumbing smoke test, not a benchmark, and its subscores are explicitly not leaderboard-comparable (confirmed by re-running it: 4 steps over 2 trajectories, mean per-step time ~130 ms, and Rel-L2/TKE/MVPE/Time/SPS subscores computed by the real `scoring.py` on synthetic data only).
+- No submission has been made to Codabench, and no leaderboard score exists.
+- The adapter's anchor loss and SPS bound logic have been implemented and exercised on synthetic data, but `policy.yaml`'s thresholds (`err_low`, `err_high`, `adapt_lr`, `anchor_lambda`, …) are still defaults, not tuned against real validation trajectories.
 
-Sizes: CNO 32 MB, Transolver 50 MB, FNO 403 MB (fp32) / 201 MB (fp16-packed).
-Only FNO needs fp16 packing to fit under the 256 MB submission cap.
+See [ROADMAP.md](ROADMAP.md) for exactly what's next and why.
 
-Use one as the base model your TTT method adapts:
+## Roadmap
 
-```python
-from load_baseline import load_baseline, make_example_input
-from solution.submission import AgenticTTTModel
+The immediate priority is closing the gap between "runs on synthetic shape-check data" and "has a real, honest baseline-vs-adapted comparison on held-out real PIV trajectories," before any further controller tuning. See [ROADMAP.md](ROADMAP.md) for the full plan.
 
-base, meta = load_baseline("sim_real_cno.pth")     # type auto-detected
-model = AgenticTTTModel(base, device="cpu", policy={...})  # adapt in ttt_step
+## Tech Stack
 
-x = make_example_input("data/example/test_real/5025_5.h5")  # (1,20,32,64,3)
-y = base(x)                                                 # (1,20,32,64,3)
-```
+- **PyTorch** — model definitions, training loops, adaptation
+- **CNO / FNO / Transolver** — vendored neural-operator baseline architectures (`src/rpde_baselines/`)
+- **h5py / NumPy** — PIV trajectory I/O and array processing
+- **PyYAML** — controller policy configuration
+- **OpenAI-compatible client** — optional LLM action selection through the organizer gateway
+- **Codabench** — competition submission platform (target)
 
-The example call is a raw-space shape check; during evaluation `ttt_step`
-receives tensors already normalized with the official stats, which is the space
-the checkpoints were trained in. Geometry: channels `[u, v, p]` (p = 0),
-`T_in = T_out = 20`, eval resolution `32 x 64` (the kit example h5 stores raw
-`64 x 128`; `make_example_input(..., sub_s=2)` handles the subsampling).
+## License
 
-## Training Data
+No `LICENSE` file is present in this repository. It began as an organizer-distributed starting kit for the RealPDE Track 2 competition (vendored baseline model code under `src/rpde_baselines/` is upstream competition code, not authored here), so a blanket license has not been added — check the competition's own terms before reusing or redistributing this code.
 
-The example data here is for shape checks only. The full training release
-(simulated pretraining + real finetuning trajectories) is on Google Drive:
-[NeurIPS 2026 RealPDE Competition data](https://drive.google.com/drive/folders/1Cg23DoTuSvWXR3Mm1uRfmMNAbkyaIhrQ).
-Track 1 and Track 2 share the same release.
+## Author
 
-## LLM Access
-
-Optional LLM calls must go through the organizer-provided gateway. The endpoint,
-the model name and a code example are on the competition Submission page. Direct
-network access and your own API keys are prohibited, and LLM latency counts
-toward Time. The numbers in `src/solution/policy.yaml` are the active solution's own, not
-gateway limits.
-
-## Active Solution Starting Point
-
-`src/solution/` is a submittable adaptation of the agentic-LTTTA baseline
-([github.com/PgUpDn/agentic_LTTTA](https://github.com/PgUpDn/agentic_LTTTA)):
-a bounded controller (skip / recalibrate / update-adapter) driven by an
-offline-tuned `policy.yaml`, with optional online LLM action selection through
-the organizer gateway (auto-detected from the injected `OPENAI_*` environment,
-safe fallback to the rule policy). Run `python scripts/local_eval.py --submission
-src/solution`, and see `src/solution/README.md` for how it maps the upstream
-offline-design / online-execution demos onto the official Track 2 protocol.
+Ayush Singh — [GitHub](https://github.com/ayushsi42) · [LinkedIn](https://www.linkedin.com/in/ayush-singh-40539522b/) · ayushsingh73920@gmail.com

@@ -11,6 +11,8 @@ The short answer is **test-time adaptation (TTA)**: let the model adjust while i
 
 The field is large—one recent survey maps more than 400 papers: [Xiao & Snoek, 2024](https://arxiv.org/abs/2411.03687). This guide focuses on the major ideas you will repeatedly encounter and translates every one into the RealPDE setting.
 
+**A note on scope:** almost everything below comes from image classification, because that is where TTA's vocabulary was established. A separate, more recently active thread studies test-time adaptation for *time series forecasting* specifically — closer in shape to RealPDE's streaming, delayed-target protocol. See [`literature_review_tta_time_series.md`](literature_review_tta_time_series.md) for that thread; read this one first for the foundational vocabulary, then that one for the closer analogues.
+
 ---
 
 ## Before the story: the one thing RealPDE gives us that most TTA papers do not
