@@ -7,3 +7,7 @@ __pycache__/
 /data/train_sim.tar.gz*
 /data/train_sim/
 /outputs/
+
+.env
+.env.*
+!*.env.example
